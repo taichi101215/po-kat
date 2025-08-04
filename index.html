@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Local Texas Hold'em</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    input, button { margin: 5px; }
+    .hidden { display: none; }
+    .highlight { background: #eef; padding: 5px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h2>ローカル・テキサスホールデムポーカー</h2>
+
+  <div id="room-controls">
+    <input id="roomId" placeholder="部屋ID" />
+    <input id="roomPw" placeholder="パスワード" type="password" />
+    <button id="createRoom">部屋作成</button>
+    <button id="joinRoom">部屋参加</button>
+  </div>
+
+  <div id="gameArea" class="hidden">
+    <p><strong>現在の部屋:</strong> <span id="currentRoom"></span></p>
+    <p><strong>あなた:</strong> <span id="playerId"></span></p>
+    <p><strong>チップ:</strong> <span id="chipCount">1000</span> 点</p>
+    <p><strong>状態:</strong> <span id="playerStatus">待機</span></p>
+
+    <div id="turnInfo" class="highlight"></div>
+
+    <button id="dealCards">カード配布（ホスト）</button>
+    <button id="checkBtn">チェック</button>
+    <button id="raiseBtn">レイズ（100点）</button>
+    <button id="foldBtn">フォールド</button>
+    <button id="showWinner">勝者判定（ホスト）</button>
+
+    <div id="playerHand"></div>
+    <div id="communityCards"></div>
+  </div>
+
+  <script>
+    const playerId = "Player_" + Math.floor(Math.random() * 10000);
+    let currentRoom = "", chip = 1000, status = "active", currentTurn = 0;
+
+    const chipSpan = document.getElementById("chipCount");
+    const statusSpan = document.getElementById("playerStatus");
+    const playerIdSpan = document.getElementById("playerId");
+    const turnInfo = document.getElementById("turnInfo");
+
+    playerIdSpan.innerText = playerId;
+
+    function updateDisplay() {
+      chipSpan.innerText = chip;
+      statusSpan.innerText = status;
+    }
+
+    document.getElementById("createRoom").onclick = () => {
+      const roomId = document.getElementById("roomId").value;
+      const pw = document.getElementById("roomPw").value;
+      const roomInfo = {
+        password: pw,
+        players: [playerId],
+        chips: { [playerId]: 1000 },
+        statuses: { [playerId]: "active" },
+        turn: 0,
+        pot: 0
+      };
+      localStorage.setItem("room_" + roomId, JSON.stringify(roomInfo));
+      enterRoom(roomId);
+    };
+
+    document.getElementById("joinRoom").onclick = () => {
+      const roomId = document.getElementById("roomId").value;
+      const pw = document.getElementById("roomPw").value;
+      const room = JSON.parse(localStorage.getItem("room_" + roomId));
+      if (room && room.password === pw) {
+        if (!room.players.includes(playerId)) {
+          room.players.push(playerId);
+          room.chips[playerId] = 1000;
+          room.statuses[playerId] = "active";
+        }
+        localStorage.setItem("room_" + roomId, JSON.stringify(room));
+        enterRoom(roomId);
+      } else {
+        alert("部屋が存在しないかパスワードが違います");
+      }
+    };
+
+    function enterRoom(roomId) {
+      currentRoom = roomId;
+      document.getElementById("room-controls").classList.add("hidden");
+      document.getElementById("gameArea").classList.remove("hidden");
+      document.getElementById("currentRoom").innerText = roomId;
+      updateDisplay();
+    }
+
+    document.getElementById("dealCards").onclick = () => {
+      const deck = createDeck().sort(() => Math.random() - 0.5);
+      const room = JSON.parse(localStorage.getItem("room_" + currentRoom));
+      room.community = deck.slice(0, 5);
+      room.hands = {};
+      room.players.forEach((p, i) => {
+        room.hands[p] = deck.slice(5 + i * 2, 7 + i * 2);
+      });
+      room.turn = 0;
+      room.pot = 0;
+      localStorage.setItem("room_" + currentRoom, JSON.stringify(room));
+    };
+
+    function createDeck() {
+      const suits = ["♠", "♥", "♦", "♣"];
+      const ranks = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
+      return suits.flatMap(suit => ranks.map(rank => rank + suit));
+    }
+
+    document.getElementById("checkBtn").onclick = () => {
+      action("checked");
+    };
+    document.getElementById("raiseBtn").onclick = () => {
+      if (chip >= 100) {
+        chip -= 100;
+        action("raised", 100);
+      } else {
+        alert("チップ不足");
+      }
+    };
+    document.getElementById("foldBtn").onclick = () => {
+      action("folded");
+      status = "folded";
+      updateDisplay();
+    };
+
+    function action(act, amount = 0) {
+      const room = JSON.parse(localStorage.getItem("room_" + currentRoom));
+      room.statuses[playerId] = act;
+      if (amount) room.pot += amount;
+      localStorage.setItem("room_" + currentRoom, JSON.stringify(room));
+      nextTurn(room);
+    }
+
+    function nextTurn(room) {
+      room.turn = (room.turn + 1) % room.players.length;
+      localStorage.setItem("room_" + currentRoom, JSON.stringify(room));
+    }
+
+    document.getElementById("showWinner").onclick = () => {
+      const room = JSON.parse(localStorage.getItem("room_" + currentRoom));
+      let best = "", winner = "";
+      room.players.forEach(p => {
+        if (room.statuses[p] !== "folded") {
+          const hand = room.hands[p].concat(room.community);
+          const rank = evaluateHand(hand);
+          if (rank > best) {
+            best = rank;
+            winner = p;
+          }
+        }
+      });
+      room.chips[winner] += room.pot;
+      localStorage.setItem("room_" + currentRoom, JSON.stringify(room));
+      alert("勝者: " + winner + "（" + best + "）");
+    };
+
+    function evaluateHand(cards) {
+      const ranks = cards.map(c => c.slice(0, -1));
+      const counts = {};
+      ranks.forEach(r => counts[r] = (counts[r] || 0) + 1);
+      const values = Object.values(counts);
+      if (values.includes(4)) return "フォーカード";
+      if (values.includes(3) && values.includes(2)) return "フルハウス";
+      if (values.includes(3)) return "スリーカード";
+      if (values.filter(v => v === 2).length >= 2) return "ツーペア";
+      if (values.includes(2)) return "ワンペア";
+      return "ハイカード";
+    }
+
+    window.addEventListener("storage", e => {
+      const room = JSON.parse(localStorage.getItem("room_" + currentRoom));
+      if (room) {
+        document.getElementById("communityCards").innerText = "場札: " + room.community.join(", ");
+        const hand = room.hands?.[playerId] || [];
+        document.getElementById("playerHand").innerText = "手札: " + hand.join(", ");
+        turnInfo.innerText = "現在のターン: " + room.players[room.turn];
+        chip = room.chips[playerId];
+        status = room.statuses[playerId];
+        updateDisplay();
+      }
+    });
+  </script>
+</body>
+</html>
